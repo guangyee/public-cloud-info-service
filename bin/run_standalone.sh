@@ -38,6 +38,11 @@ export POSTGRES_HOST=${POSTGRES_HOST:-127.0.0.1}
 #export POSTGRES_SSL_MODE=require
 #export POSTGRES_SSL_ROOT_CERTIFICATE=/var/task/rds-combined-ca-bundle.pem
 
+# add your AWS cred here
+export AWS_S3_BUCKET_NAME=pint-ng-overflow
+#export AWS_ACCESS_KEY_ID=
+#export AWS_SECRET_ACCESS_KEY=
+
 export FLASK_ENV=development
 
 env FLASK_APP=$SRCDIR/pint_server/app.py flask run -h 0.0.0.0

@@ -18,8 +18,14 @@
 import datetime
 import re
 from decimal import Decimal
-from flask import (abort, Flask, jsonify, make_response, request, redirect,
-                   Response)
+from flask import (
+    abort,
+    Flask,
+    jsonify,
+    make_response,
+    request,
+    redirect,
+    Response)
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text, or_
@@ -29,6 +35,7 @@ from xml.dom import minidom
 import xml.etree.ElementTree as ET
 
 import pint_server
+from pint_server.aws_s3 import store_file_to_bucket
 from pint_server.database import init_db, get_psql_server_version
 from pint_server.models import (ImageState, AmazonImagesModel,
                                 OracleImagesModel, AlibabaImagesModel,
@@ -93,6 +100,10 @@ PROVIDER_SERVERS_EXCLUDE_ATTRS = {
 }
 
 SUPPORTED_CATEGORIES = ['images', 'servers']
+
+# NOTE: AWS lambda payload size cannot exceed 6MB. We are setting the
+# maximum payload size to 5.5MB to account for the HTTP protocol overheads
+MAX_PAYLOAD_SIZE = 5500000
 
 
 def get_supported_providers():
@@ -457,17 +468,33 @@ def assert_valid_category(category):
         abort(Response('', status=400))
 
 
-def make_response(content_dict, collection_name, element_name):
+def make_response(content_dict, collection_name, element_name, provider=None):
     if request.path.endswith('.xml'):
-        return Response(
-            json_to_xml(content_dict, collection_name, element_name),
-            mimetype='application/xml;charset=utf-8')
+        payload = json_to_xml(content_dict, collection_name, element_name)
+        if (collection_name == 'images' and
+                len(payload) > MAX_PAYLOAD_SIZE):
+            filename = '%s_images.xml' % (provider)
+            redirect_url = store_file_to_bucket(
+                filename, payload)
+            return redirect(redirect_url)
+        else:
+            return Response(
+                json_to_xml(content_dict, collection_name, element_name),
+                mimetype='application/xml;charset=utf-8')
     else:
         if collection_name:
             content = {collection_name: content_dict}
         else:
             content = content_dict
-        return jsonify(**content)
+        jsonify_resp = jsonify(**content)
+        if (collection_name == 'images' and 
+                jsonify_resp.content_length > MAX_PAYLOAD_SIZE):
+            filename = '%s_images.xml' % (provider)
+            redirect_url = store_file_to_bucket(
+                filename, jsonify_resp.get_data())
+            return redirect(redirect_url)
+        else:
+            return jsonify_resp
 
 
 @app.route('/v1/providers', methods=['GET'])
@@ -566,7 +593,7 @@ def list_provider_resource(provider, category):
     assert_valid_provider(provider)
     assert_valid_category(category)
     resources = globals()['get_provider_%s' % (category)](provider)
-    return make_response(resources, category, category[:-1])
+    return make_response(resources, category, category[:-1], provider=provider)
 
 
 @app.route('/v1/<provider>/dataversion', methods=['GET'])
